@@ -150,4 +150,119 @@ class Builder extends BaseBuilder
     {
         return $this->connection;
     }
+    
+     /**
+     * Set the limit and offset for a given page.
+     *
+     * @param  int  $page
+     * @param  int  $perPage
+     * @return \Illuminate\Database\Query\Builder|static
+     */
+    public function forPage($page, $perPage = 15)
+    {
+        return $this->offset(($page - 1) * $perPage)->limit($perPage);
+    }
+
+    /**
+     * Set the "offset" value of the query.
+     *
+     * @param  int  $value
+     * @return $this
+     */
+    public function offset($value)
+    {
+        $property = $this->unions ? 'unionOffset' : 'offset';
+
+        $this->$property = max(0, $value);
+
+        return $this;
+    }
+
+    /**
+     * Get the count of the total records for the paginator.
+     *
+     * @param  array  $columns
+     * @return int
+     */
+    public function getCountForPagination($columns = ['*'])
+    {
+        $results = $this->runPaginationCountQuery($columns);
+
+        // Once we have run the pagination count query, we will get the resulting count and
+        // take into account what type of query it was. When there is a group by we will
+        // just return the count of the entire results set since that will be correct.
+        if (isset($this->groups)) {
+            return count($results);
+        } elseif (! isset($results[0])) {
+            return 0;
+        } elseif (is_object($results[0])) {
+            return (int) $results[0]->aggregate;
+        }
+
+        return (int) array_change_key_case((array) $results[0])['aggregate'];
+    }
+    
+    /**
+     * Run a pagination count query.
+     *
+     * @param  array  $columns
+     * @return array
+     */
+    protected function runPaginationCountQuery($columns = ['*'])
+    {
+        return $this->cloneWithout(['columns', 'orders', 'limit', 'offset'])
+            ->cloneWithoutBindings(['select', 'order'])
+            ->setAggregate('count', $this->withoutSelectAliases($columns))
+            ->get()->all();
+    }
+
+    /**
+     * Clone the query without the given bindings.
+     *
+     * @param  array  $except
+     * @return static
+     */
+    public function cloneWithoutBindings(array $except)
+    {
+        return tap(clone $this, function ($clone) use ($except) {
+            foreach ($except as $type) {
+                $clone->bindings[$type] = [];
+            }
+        });
+    }
+
+    /**
+     * Remove the column aliases since they will break count queries.
+     *
+     * @param  array  $columns
+     * @return array
+     */
+    protected function withoutSelectAliases(array $columns)
+    {
+        return array_map(function ($column) {
+            return is_string($column) && ($aliasPosition = strpos(strtolower($column), ' as ')) !== false
+                ? substr($column, 0, $aliasPosition) : $column;
+        }, $columns);
+    }
+    
+    /**
+     * Set the aggregate property without running the query.
+     *
+     * @param  string  $function
+     * @param  array  $columns
+     * @return $this
+     */
+    protected function setAggregate($function, $columns)
+    {
+        $this->aggregate = compact('function', 'columns');
+
+        if (empty($this->groups)) {
+            $this->orders = null;
+
+            $this->bindings['order'] = [];
+        }
+
+        return $this;
+    }
+    
 }
